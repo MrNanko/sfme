@@ -9,6 +9,7 @@ from telethon import events
 from sfme.main import client
 from sfme.utils.log import logger
 
+
 @client.on(events.NewMessage(outgoing=True, pattern='^re$'))
 async def re_handler(event):
     try:

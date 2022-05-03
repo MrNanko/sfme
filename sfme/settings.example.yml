@@ -4,6 +4,11 @@ version: "0.0.1"
 api_id: ""
 api_hash: ""
 
+redis:
+  host: "127.0.0.1"
+  port: "6379"
+  password: "123456"
+
 plugins:
   forward:
     enable: false

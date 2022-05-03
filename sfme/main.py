@@ -7,7 +7,8 @@
 # @Software: PyCharm
 
 from telethon import TelegramClient
-# import redis
+import socket
+import redis
 import yaml
 from pathlib import Path
 from importlib import import_module
@@ -18,6 +19,7 @@ from sfme.utils.log import logger
 
 global settings
 global client
+global redis_pool
 
 
 def _load_settings():
@@ -36,12 +38,16 @@ def _load_settings():
         exit(1)
 
 
-def _init_redis():
-    pass
-
-
-def _init_plugins():
-    pass
+def _init_redis_pool():
+    global redis_pool
+    redis_pool = redis.ConnectionPool(
+        host=settings.get('redis').get('host'),
+        port=settings.get('redis').get('port'),
+        password=settings.get('redis').get('password'),
+        decode_responses=True,
+        socket_keepalive=True,
+        socket_keepalive_options={socket.TCP_KEEPIDLE: 60, socket.TCP_KEEPINTVL: 30, socket.TCP_KEEPCNT: 3}
+    )
 
 
 def _init_client():
@@ -91,5 +97,6 @@ def start_client():
 
 
 def main():
+    _init_redis_pool()
     _load_settings()
     start_client()
