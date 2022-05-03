@@ -11,11 +11,11 @@ from sfme.main import settings, client
 
 
 @client.on(events.NewMessage(incoming=True, outgoing=True))
-async def forward_handler(event):
+async def unconditional_forwarding_handler(event):
     try:
         peer_id = await client.get_peer_id(event.message.peer_id)
-        if peer_id in [int(i) for i in settings.get('plugins').get('forward').get('rules').keys()]:
-            chat_ids = settings.get('plugins').get('forward').get('rules').get(f'{peer_id}').strip().split('&')
+        if peer_id in [int(i) for i in settings.get('plugins').get('unconditional_forwarding').get('rules').keys()]:
+            chat_ids = settings.get('plugins').get('unconditional_forwarding').get('rules').get(f'{peer_id}').strip().split('&')
             for chat_id in chat_ids:
                 await client.forward_messages(entity=int(chat_id), messages=event.message)
     except Exception as e:

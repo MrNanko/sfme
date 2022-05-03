@@ -10,8 +10,8 @@ from sfme.main import client
 from sfme.utils.log import logger
 
 
-@client.on(events.NewMessage(outgoing=True, pattern='^re$'))
-async def re_handler(event):
+@client.on(events.NewMessage(outgoing=True, pattern='^forward$'))
+async def forward_handler(event):
     try:
         entity = await client.get_entity(event.message.peer_id)
         await client.delete_messages(entity, event.message)
