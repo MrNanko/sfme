@@ -1,0 +1,11 @@
+name: "sfme settings file"
+version: "0.0.1"
+
+api_id: ""
+api_hash: ""
+
+plugins:
+  forward:
+    enable: false
+    rules:
+      "-1001555555556": "-1001555555555"
