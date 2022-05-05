@@ -6,8 +6,17 @@ api_hash: ""
 
 proxy:
   socks5:
+    addr: 127.0.0.1
+    port: 8080
+    username: ''
+    password: ''
   http:
+    addr: 127.0.0.1
+    port: 8080
   mtp:
+    addr: 127.0.0.1
+    port: 8080
+    secret: xxxx
 
 redis:
   host: "127.0.0.1"

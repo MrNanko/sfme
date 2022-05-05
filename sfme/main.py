@@ -23,7 +23,7 @@ global redis_pool
 
 
 def _load_settings():
-    # settings.yml config file
+    """load settings.yml"""
     try:
         with open(file=f"{Path(__file__).resolve().parent.joinpath('settings.yml')}", mode='r',
                   encoding='utf-8') as file_obj:
@@ -39,6 +39,12 @@ def _load_settings():
 
 
 def _init_redis_pool():
+    """
+    example:
+        redis_conn = redis.Redis(connection_pool=redis_pool)  # 链接 redis
+        redis_status = redis_conn.ping()
+        logger.info(redis_status)
+    """
     global redis_pool
     redis_pool = redis.ConnectionPool(
         host=settings.get('redis').get('host'),
@@ -53,34 +59,57 @@ def _init_redis_pool():
 def _init_client():
     global client
     client = TelegramClient('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'))
-    # if settings.get("proxy").get("socks5", None):
+    # if settings.get('proxy').get('socks5', None):
     #     import socks
-    #
-    #     addr = settings.get("proxy").get("socks5").get("addr")
-    #     port = settings.get("proxy").get("socks5").get("port")
+    #     socks5_addr = settings.get('proxy').get('socks5').get('addr', '').strip()
+    #     socks5_port = settings.get('proxy').get('socks5').get('port', '').strip()
+    #     socks5_username = settings.get('proxy').get('socks5').get('socks5_username', '').strip()
+    #     socks5_password = settings.get('proxy').get('socks5').get('socks5_password', '').strip()
     #     client = TelegramClient('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
-    #                             proxy=(socks.SOCKS5, addr, port))
+    #                             auto_reconnect=True,
+    #                             proxy=(socks.SOCKS5, socks5_addr, socks5_port, True, socks5_username, socks5_password))
+    # elif settings.get('proxy').get('http', None):
+    #     http_addr = settings.get('proxy').get('http').get('addr', '').strip()
+    #     http_port = settings.get('proxy').get('http').get('port', '').strip()
+    #     proxies = {
+    #         'http': f'http://{http_addr}:{http_port}',
+    #         'https': f'https://{http_addr}:{http_port}'
+    #     }
+    #     client = TelegramClient('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
+    #                             auto_reconnect=True,
+    #                             proxy=proxies)
+    # elif settings.get('proxy').get('mtp', None):
+    #     from telethon import connection
+    #     mtp_addr = settings.get('proxy').get('mtp').get('addr', '').strip()
+    #     mtp_port = settings.get('proxy').get('mtp').get('addr', '').strip()
+    #     mtp_secret = settings.get('proxy').get('mtp').get('secret', '').strip()
+    #     client = TelegramClient('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
+    #                             auto_reconnect=True,
+    #                             connection=connection.ConnectionTcpMTProxyRandomizedIntermediate,
+    #                             proxy=(mtp_addr, int(mtp_port), mtp_secret))
     # else:
     #     client = TelegramClient('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'))
 
 
 def _import_modules_and_plugins():
-    logger.info(f'导入模块 sfme.modules.{module_list}')
+    logger.info(f'检测到模块列表 sfme.modules.{module_list}')
     for module_name in module_list:
         try:
             import_module(f'sfme.modules.{module_name}')
         except BaseException as e:
             logger.error(e)
 
-    logger.info(f'导入模块 sfme.plugins.{plugin_list}')
+    logger.info(f'检测到插件列表 sfme.plugins.{plugin_list}')
     for plugin_name in plugin_list:
         try:
-            if not settings.get('plugins').get(plugin_name).get('enable'):
-                continue
-            else:
+            # 如果未在 settings.yml 中设置启动或者设置为 true 则导入插件。
+            if not settings.get('plugins').get(plugin_name, None):
                 import_module(f'sfme.plugins.{plugin_name}')
+            elif not settings.get('plugins').get(plugin_name).get('enable', False):
+                continue
         except BaseException as e:
             logger.error(e)
+            logger.error(traceback.format_exc())
 
 
 def start_client():
@@ -97,6 +126,6 @@ def start_client():
 
 
 def main():
-    _init_redis_pool()
     _load_settings()
+    _init_redis_pool()
     start_client()
