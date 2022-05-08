@@ -6,44 +6,51 @@
 # @File    : ping
 # @Software: PyCharm
 import re
+import traceback
 from datetime import datetime
-from telethon import events
-from telethon.tl import functions
-from sfme.main import client
+from pyrogram import filters
+from sfme.main import app
 from sfme.utils.log import logger
 from sfme.utils.execute import executer
+from pyrogram.raw import functions
 
 
-@client.on(events.NewMessage(outgoing=True, pattern=r'^ping(\s((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})(\.((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})){3})?$'))
-async def ping_handler(event):
+@app.on_message(filters.me & filters.regex(
+    "^.ping(\s((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})(\.((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})){3})?$"))
+async def ping_handler(client, message):
     try:
-        curr_message = event.message
+        curr_message = str(message.text)
         try:
-            ip_address = re.search(r'((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})(\.((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})){3}', curr_message.text, re.S).group(0)
+            ip_address = re.search(r'((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})(\.((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})){3}',
+                                   curr_message, re.S).group(0)
         except AttributeError:
             ip_address = None
         if ip_address:
             result = await executer(f"ping -c 1 {ip_address} | awk -F '/' " + "'END {print $5}'")
             if result:
-                await curr_message.edit(f"Pong! | PING: {result} ms")
+                await client.edit_message_text(chat_id=message.chat.id, message_id=message.id,
+                                               text=f"Pong! | PING: {result} ms")
             else:
-                await curr_message.edit(f"ping: {ip_address}: Name or service not known")
+                await client.edit_message_text(chat_id=message.chat.id, message_id=message.id,
+                                               text=f"ping: {ip_address}: Name or service not known")
         else:
             start = datetime.now()
-            await client(functions.PingRequest(ping_id=0))
+            functions.Ping(ping_id=0)
             end = datetime.now()
             ping_duration = (end - start).microseconds / 1000
             start = datetime.now()
-            await curr_message.edit("Pong!")
+            await client.edit_message_text(chat_id=message.chat.id, message_id=message.id,
+                                           text="Pong!")
             end = datetime.now()
             msg_duration = (end - start).microseconds / 1000
-            await curr_message.edit(f"Pong! | PING: {ping_duration} ms | MSG: {msg_duration} ms")
+            await client.edit_message_text(chat_id=message.chat.id, message_id=message.id,
+                                           text=f"Pong! | PING: {ping_duration} ms | MSG: {msg_duration} ms")
     except Exception as e:
         logger.error(f'{e}')
 
 
-@client.on(events.NewMessage(outgoing=True, pattern='^pingdc$'))
-async def pingdc_handler(event):
+@app.on_message(filters.me & filters.regex("^.pingdc$"))
+async def pingdc_handler(client, message):
     try:
         data_centers = {
             1: "149.154.175.50",
@@ -56,12 +63,11 @@ async def pingdc_handler(event):
         for dc in range(1, 6):
             result = await executer(f"ping -c 1 {data_centers[dc]} | awk -F '/' " + "'END {print $5}'")
             data.append(result)
-        await event.message.edit(
-            f"`DC1: {data[0]}ms`\n"
-            f"`DC2: {data[1]}ms`\n"
-            f"`DC3: {data[2]}ms`\n"
-            f"`DC4: {data[3]}ms`\n"
-            f"`DC5: {data[4]}ms`"
-        )
+        await client.edit_message_text(chat_id=message.chat.id, message_id=message.id,
+                                       text=f"`DC1: {data[0]}ms`\n"
+                                            f"`DC2: {data[1]}ms`\n"
+                                            f"`DC3: {data[2]}ms`\n"
+                                            f"`DC4: {data[3]}ms`\n"
+                                            f"`DC5: {data[4]}ms`")
     except Exception as e:
         logger.error(f'{e}')

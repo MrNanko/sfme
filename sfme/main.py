@@ -6,7 +6,7 @@
 # @File    : main
 # @Software: PyCharm
 
-from telethon import TelegramClient
+from pyrogram import Client
 import socket
 import redis
 import yaml
@@ -18,7 +18,7 @@ from sfme.plugins import plugin_list
 from sfme.utils.log import logger
 
 global settings
-global client
+global app
 global redis_pool
 
 
@@ -56,39 +56,53 @@ def _init_redis_pool():
     )
 
 
-def _init_client():
-    global client
-    client = TelegramClient('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'))
+def _init_application():
+    global app
+    app_version = "sfme v0.0.2"
+    device_model = "PC"
+    system_version = "Linux"
+    app = Client(name='sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
+                 app_version=app_version,
+                 device_model=device_model,
+                 system_version=system_version,
+                 hide_password=True)
     # if settings.get('proxy').get('socks5', None):
     #     import socks
     #     socks5_addr = settings.get('proxy').get('socks5').get('addr', '').strip()
     #     socks5_port = settings.get('proxy').get('socks5').get('port', '').strip()
     #     socks5_username = settings.get('proxy').get('socks5').get('socks5_username', '').strip()
     #     socks5_password = settings.get('proxy').get('socks5').get('socks5_password', '').strip()
-    #     client = TelegramClient('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
-    #                             auto_reconnect=True,
-    #                             proxy=(socks.SOCKS5, socks5_addr, socks5_port, True, socks5_username, socks5_password))
-    # elif settings.get('proxy').get('http', None):
+    #     app = Client(name='sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
+    #                  proxy=(socks.SOCKS5, socks5_addr, socks5_port, True, socks5_username, socks5_password),
+    #                  app_version=app_version,
+    #                  device_model=device_model,
+    #                  system_version=system_version,
+    #                  hide_password=True)
+    # elif settings.get(name='proxy').get('http', None):
     #     http_addr = settings.get('proxy').get('http').get('addr', '').strip()
     #     http_port = settings.get('proxy').get('http').get('port', '').strip()
     #     proxies = {
     #         'http': f'http://{http_addr}:{http_port}',
     #         'https': f'https://{http_addr}:{http_port}'
     #     }
-    #     client = TelegramClient('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
-    #                             auto_reconnect=True,
-    #                             proxy=proxies)
+    #     app = Client(name='sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
+    #                  proxy=proxies,
+    #                  app_version=app_version,
+    #                  device_model=device_model,
+    #                  system_version=system_version,
+    #                  hide_password=True)
     # elif settings.get('proxy').get('mtp', None):
-    #     from telethon import connection
     #     mtp_addr = settings.get('proxy').get('mtp').get('addr', '').strip()
     #     mtp_port = settings.get('proxy').get('mtp').get('addr', '').strip()
     #     mtp_secret = settings.get('proxy').get('mtp').get('secret', '').strip()
-    #     client = TelegramClient('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
-    #                             auto_reconnect=True,
-    #                             connection=connection.ConnectionTcpMTProxyRandomizedIntermediate,
-    #                             proxy=(mtp_addr, int(mtp_port), mtp_secret))
+    #     app = Client(name='sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
+    #                  proxy=(mtp_addr, int(mtp_port), mtp_secret),
+    #                  app_version=app_version,
+    #                  device_model=device_model,
+    #                  system_version=system_version,
+    #                  hide_password=True)
     # else:
-    #     client = TelegramClient('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'))
+    #     app = Client('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'))
 
 
 def _import_modules_and_plugins():
@@ -102,30 +116,30 @@ def _import_modules_and_plugins():
     logger.info(f'检测到插件列表 sfme.plugins.{plugin_list}')
     for plugin_name in plugin_list:
         try:
-            # 如果未在 settings.yml 中设置启动或者设置为 true 则导入插件。
+            # Do not import if plugin the option of enable is set to false.
             if not settings.get('plugins').get(plugin_name, None):
                 import_module(f'sfme.plugins.{plugin_name}')
             elif not settings.get('plugins').get(plugin_name).get('enable', False):
-                continue
+                logger.info(f'Skip importing plugins - {plugin_name}')
+            else:
+                import_module(f'sfme.plugins.{plugin_name}')
         except BaseException as e:
             logger.error(e)
             logger.error(traceback.format_exc())
 
 
-def start_client():
-    _init_client()
+def start_application():
+    _init_application()
     _import_modules_and_plugins()
 
-    with client:
-        try:
-            client.start()
-            client.run_until_disconnected()
-        finally:
-            client.disconnect()
-            logger.error(f'{traceback.format_exc()}')
+    try:
+        app.run()
+    finally:
+        app.stop()
+        logger.error(f'{traceback.format_exc()}')
 
 
 def main():
     _load_settings()
     _init_redis_pool()
-    start_client()
+    start_application()

@@ -5,17 +5,23 @@
 # @Author  : leamx
 # @File    : re
 # @Software: PyCharm
-from telethon import events
-from sfme.main import client
+import re
+from pyrogram import filters
+from sfme.main import app
 from sfme.utils.log import logger
 
 
-@client.on(events.NewMessage(outgoing=True, pattern='^forward$'))
-async def forward_handler(event):
+@app.on_message(filters.me & filters.regex('^.forward(\s\d+)?$'))
+async def forward_handler(client, message):
     try:
-        entity = await client.get_entity(event.message.peer_id)
-        await client.delete_messages(entity, event.message)
-        reply_message = await event.get_reply_message()
-        await client.forward_messages(entity=entity, messages=reply_message)
+        await client.delete_messages(message.chat.id, message.id)
+        if re.search('.*(\d+).*', message.text, re.S):
+            times = re.search('.*(\d+).*', message.text, re.S).group(1)
+            for _ in range(int(times)):
+                await client.forward_messages(chat_id=message.chat.id, from_chat_id=message.chat.id,
+                                              message_ids=message.reply_to_message_id)
+        else:
+            await client.forward_messages(chat_id=message.chat.id, from_chat_id=message.chat.id,
+                                          message_ids=message.reply_to_message_id)
     except Exception as e:
         logger.error(f'{e}')

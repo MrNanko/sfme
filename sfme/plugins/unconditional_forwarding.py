@@ -5,18 +5,18 @@
 # @Author  : leamx
 # @File    : forward_handler
 # @Software: PyCharm
-from telethon import events
+from pyrogram import filters
 from sfme.utils.log import logger
-from sfme.main import settings, client
+from sfme.main import settings, app
 
 
-@client.on(events.NewMessage(incoming=True, outgoing=True))
-async def unconditional_forwarding_handler(event):
+@app.on_message(filters.chat([int(i) for i in settings.get('plugins').get('unconditional_forwarding').get('rules').keys()]))
+async def unconditional_forwarding_handler(client, message):
     try:
-        peer_id = await client.get_peer_id(event.message.peer_id)
-        if peer_id in [int(i) for i in settings.get('plugins').get('unconditional_forwarding').get('rules').keys()]:
-            chat_ids = settings.get('plugins').get('unconditional_forwarding').get('rules').get(f'{peer_id}').strip().split('&')
-            for chat_id in chat_ids:
-                await client.forward_messages(entity=int(chat_id), messages=event.message)
+        peer_id = message.chat.id
+        message_id = message.id
+        chat_ids = settings.get('plugins').get('unconditional_forwarding').get('rules').get(f'{peer_id}').strip().split('&')
+        for chat_id in [int(i) for i in chat_ids]:
+            await client.forward_messages(chat_id=chat_id, from_chat_id=peer_id, message_ids=message_id)
     except Exception as e:
         logger.error(f'{e}')
