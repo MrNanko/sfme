@@ -50,9 +50,9 @@ def _init_redis_pool():
         host=settings.get('redis').get('host'),
         port=settings.get('redis').get('port'),
         password=settings.get('redis').get('password'),
+        db=10,
         decode_responses=True,
-        socket_keepalive=True,
-        socket_keepalive_options={socket.TCP_KEEPIDLE: 60, socket.TCP_KEEPINTVL: 30, socket.TCP_KEEPCNT: 3}
+        socket_keepalive=True
     )
 
 
@@ -61,48 +61,29 @@ def _init_application():
     app_version = "sfme v0.0.2"
     device_model = "PC"
     system_version = "Linux"
-    app = Client(name='sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
-                 app_version=app_version,
-                 device_model=device_model,
-                 system_version=system_version,
-                 hide_password=True)
-    # if settings.get('proxy').get('socks5', None):
-    #     import socks
-    #     socks5_addr = settings.get('proxy').get('socks5').get('addr', '').strip()
-    #     socks5_port = settings.get('proxy').get('socks5').get('port', '').strip()
-    #     socks5_username = settings.get('proxy').get('socks5').get('socks5_username', '').strip()
-    #     socks5_password = settings.get('proxy').get('socks5').get('socks5_password', '').strip()
-    #     app = Client(name='sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
-    #                  proxy=(socks.SOCKS5, socks5_addr, socks5_port, True, socks5_username, socks5_password),
-    #                  app_version=app_version,
-    #                  device_model=device_model,
-    #                  system_version=system_version,
-    #                  hide_password=True)
-    # elif settings.get(name='proxy').get('http', None):
-    #     http_addr = settings.get('proxy').get('http').get('addr', '').strip()
-    #     http_port = settings.get('proxy').get('http').get('port', '').strip()
-    #     proxies = {
-    #         'http': f'http://{http_addr}:{http_port}',
-    #         'https': f'https://{http_addr}:{http_port}'
-    #     }
-    #     app = Client(name='sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
-    #                  proxy=proxies,
-    #                  app_version=app_version,
-    #                  device_model=device_model,
-    #                  system_version=system_version,
-    #                  hide_password=True)
-    # elif settings.get('proxy').get('mtp', None):
-    #     mtp_addr = settings.get('proxy').get('mtp').get('addr', '').strip()
-    #     mtp_port = settings.get('proxy').get('mtp').get('addr', '').strip()
-    #     mtp_secret = settings.get('proxy').get('mtp').get('secret', '').strip()
-    #     app = Client(name='sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
-    #                  proxy=(mtp_addr, int(mtp_port), mtp_secret),
-    #                  app_version=app_version,
-    #                  device_model=device_model,
-    #                  system_version=system_version,
-    #                  hide_password=True)
-    # else:
-    #     app = Client('sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'))
+
+    if settings.get('proxy').get('enable', False):
+        proxy = {
+            'scheme': settings.get('proxy').get('scheme', '').strip(),
+            'hostname': settings.get('proxy').get('hostname', '').strip(),
+            'port': int(settings.get('proxy').get('port', '')),
+            'username': settings.get('proxy').get('username', '').strip(),
+            'password': settings.get('proxy').get('password', '').strip()
+        }
+        app = Client(name='sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
+                     app_version=app_version,
+                     proxy=proxy,
+                     device_model=device_model,
+                     system_version=system_version,
+                     hide_password=True)
+        logger.info('use proxy')
+    else:
+        app = Client(name='sfme', api_id=settings.get('api_id'), api_hash=settings.get('api_hash'),
+                     app_version=app_version,
+                     device_model=device_model,
+                     system_version=system_version,
+                     hide_password=True)
+        logger.info("don't use proxy")
 
 
 def _import_modules_and_plugins():

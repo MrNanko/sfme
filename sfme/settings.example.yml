@@ -5,18 +5,12 @@ api_id: ""
 api_hash: ""
 
 proxy:
-  socks5:
-    addr: 127.0.0.1
-    port: 8080
-    username: ''
-    password: ''
-  http:
-    addr: 127.0.0.1
-    port: 8080
-  mtp:
-    addr: 127.0.0.1
-    port: 8080
-    secret: xxxx
+  enable: false
+  scheme: "socks5"  # "socks4", "socks5" and "http" are supported
+  hostname: "127.0.0.1"
+  port: 6153
+  username: ""
+  password: ""
 
 redis:
   host: "127.0.0.1"
