@@ -20,11 +20,14 @@ from sfme.utils.log import logger
 global settings
 global app
 global redis_pool
+global project_path
 
 
 def _load_settings():
     """load settings.yml"""
     try:
+        global project_path
+        project_path = Path(__file__).resolve().parent
         with open(file=f"{Path(__file__).resolve().parent.joinpath('settings.yml')}", mode='r',
                   encoding='utf-8') as file_obj:
             global settings
