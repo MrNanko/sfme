@@ -22,3 +22,6 @@ plugins:
     enable: false
     rules:
       "-1001555555556": "-1001555555555"
+  whitelist_of_stranger:
+    enable: false
+    deal: archive # 处理方式 delete/archive
