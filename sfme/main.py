@@ -6,6 +6,7 @@
 # @File    : main
 # @Software: PyCharm
 
+from . import __version__
 from pyrogram import Client
 import socket
 import redis
@@ -16,6 +17,7 @@ import traceback
 from sfme.modules import module_list
 from sfme.plugins import plugin_list
 from sfme.utils.log import logger
+from sfme.utils.models import create_tables
 
 global settings
 global app
@@ -28,8 +30,7 @@ def _load_settings():
     try:
         global project_path
         project_path = Path(__file__).resolve().parent
-        with open(file=f"{Path(__file__).resolve().parent.joinpath('settings.yml')}", mode='r',
-                  encoding='utf-8') as file_obj:
+        with open(file=f"{Path(__file__).resolve().parent.joinpath('settings.yml')}", mode='r', encoding='utf-8') as file_obj:
             global settings
             settings = yaml.load(stream=file_obj, Loader=yaml.FullLoader)
             file_obj.close()
@@ -41,10 +42,14 @@ def _load_settings():
         exit(1)
 
 
+def _init_sqlite_pool():
+    create_tables()
+
+
 def _init_redis_pool():
     """
     example:
-        redis_conn = redis.Redis(connection_pool=redis_pool)  # 链接 redis
+        redis_conn = redis.Redis(connection_pool=redis_pool)  # connect redis
         redis_status = redis_conn.ping()
         logger.info(redis_status)
     """
@@ -61,7 +66,7 @@ def _init_redis_pool():
 
 def _init_application():
     global app
-    app_version = "sfme v0.0.2"
+    app_version = f"sfme {__version__}"
     device_model = "PC"
     system_version = "Linux"
 
@@ -125,5 +130,6 @@ def start_application():
 
 def main():
     _load_settings()
+    _init_sqlite_pool()
     _init_redis_pool()
     start_application()

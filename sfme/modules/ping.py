@@ -16,7 +16,7 @@ from pyrogram.raw import functions
 
 
 @app.on_message(filters.me & filters.regex(
-    "^/ping(\s((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})(\.((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})){3})?$"))
+    "^.ping(\s((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})(\.((2(5[0-5]|[0-4]\d))|[0-1]?\d{1,2})){3})?$"))
 async def ping_handler(client, message):
     try:
         curr_message = str(message.text)
@@ -49,7 +49,7 @@ async def ping_handler(client, message):
         logger.error(f'{e}')
 
 
-@app.on_message(filters.me & filters.regex("^/pingdc$"))
+@app.on_message(filters.me & filters.regex("^.pingdc$"))
 async def pingdc_handler(client, message):
     try:
         data_centers = {
