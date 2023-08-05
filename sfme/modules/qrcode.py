@@ -13,13 +13,13 @@ from sfme.main import app, project_path
 from sfme.utils.log import logger
 
 
-@app.on_message(filters.me & filters.regex('^.genqr(\s.*)?$'))
+@app.on_message(filters.me & filters.regex('^-genqr(\s.*)?$'))
 async def generate_qrcode_handler(client, message):
     try:
         chat_id = message.chat.id
         message_text = message.text
         await client.delete_messages(chat_id, message.id)
-        text = re.search(r'.genqr\s(.*)', message_text, re.S).group(1)
+        text = re.search(r'-genqr\s(.*)', message_text, re.S).group(1)
         qr = qrcode.QRCode(
             version=1,
             error_correction=qrcode.constants.ERROR_CORRECT_H,
@@ -36,7 +36,7 @@ async def generate_qrcode_handler(client, message):
         logger.error(traceback.format_exc())
 
 
-@app.on_message(filters.me & filters.regex('^.parseqr(\s.*)?$'))
+@app.on_message(filters.me & filters.regex('^-parseqr(\s.*)?$'))
 async def parse_qrcode_handler(client, message):
     try:
         pass

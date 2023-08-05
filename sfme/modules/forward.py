@@ -11,7 +11,7 @@ from sfme.main import app
 from sfme.utils.log import logger
 
 
-@app.on_message(filters.me & filters.regex('^.re(\s\d+)?$'))
+@app.on_message(filters.me & filters.regex('^-re(\s\d+)?$'))
 async def forward_handler(client, message):
     try:
         chat_id = message.chat.id

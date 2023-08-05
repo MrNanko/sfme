@@ -78,7 +78,7 @@ async def remove_from_whitelist(client, message):
         peer_id = message.chat.id
         WhitelistOfStranger.get(peer_id=peer_id).delete_instance()
         redis_conn = redis.Redis(connection_pool=redis_pool)
-        redis_conn.delete("whitelist_of_stranger")
+        await redis_conn.delete("whitelist_of_stranger")
         logger.info(f"Remove user: {peer_id} from whitelist")
     except Exception as e:
         logger.error(f"Error line no: {e.__traceback__.tb_lineno}, info: {e.args}")
