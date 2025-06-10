@@ -1,0 +1,16 @@
+name: "sfme config file"
+
+api_id: ""
+api_hash: ""
+user_id: ""
+bot_token: ""
+
+handlers:
+  auto_forward:
+    enabled: true
+    rules:
+      - forward_from: "-11"
+        forward_to: "-22"
+      - forward_from: "-33"
+        forward_to: "-44"
+

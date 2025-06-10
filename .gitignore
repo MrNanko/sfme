@@ -129,4 +129,5 @@ dmypy.json
 .pyre/
 
 # sfme
-sfme/settings.yml
+config.yml
+.session
