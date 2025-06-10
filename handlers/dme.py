@@ -15,7 +15,7 @@ from ..core.client import client
 
 logger = logging.getLogger(__name__)
 
-@client.on(events.NewMessage(incoming=True, pattern=r'^-dme(?:\s+(\d+))?$', from_users='me'))
+@client.on(events.NewMessage(pattern=r'^-dme(?:\s+(\d+))?$', from_users='me'))
 async def delete_handler(event):
     """ Handle the -dme command to delete messages in the current chat."""
     try:
