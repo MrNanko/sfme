@@ -47,7 +47,7 @@ def main():
 
     __load_handlers()
 
-    client = init_client(config.get("api_id"), config.get("api_hash"), "sfme_dev")
+    client = init_client(config.get("api_id"), config.get("api_hash"), "sfme")
 
     client.start()
     client.run_until_disconnected()
