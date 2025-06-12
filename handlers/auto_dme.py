@@ -60,10 +60,13 @@ async def auto_dme_manage_handler(event):
     """Auto delete message manage handler"""
     try:
         chat_id = event.chat_id
+        await event.delete()
 
         if not redis_ops:
             logger.error("Redis operations not initialized")
             return
+
+        logger.info(f"Managing auto delete message for chat {chat_id}")
 
         uid = config.get('user_id', 'unknown')
         key = MESSAGE_CHAT_ID_WHITE_LIST_KEY_PATTERN.format(uid=uid)
@@ -71,25 +74,27 @@ async def auto_dme_manage_handler(event):
         # Use asyncio to run Redis operations in a thread-safe manner
         loop = asyncio.get_running_loop()
 
+
         op = event.pattern_match.group(1) if event.pattern_match.group(1) else None
         if op == 'add':
             await loop.run_in_executor(None, redis_ops.sadd, key, chat_id)
-            await client.edit_message(event.chat_id, event.message, f"Chat ID {chat_id} added to auto delete message whitelist.")
+            result = await event.respond(f"Chat ID {chat_id} added to auto delete message whitelist.")
         elif op == 'remove':
             await loop.run_in_executor(None, redis_ops.srem, key, chat_id)
-            await client.edit_message(event.chat_id, event.message, f"Chat ID {chat_id} removed from auto delete message whitelist.")
+            result = await event.respond(f"Chat ID {chat_id} removed from auto delete message whitelist.")
         elif op == 'list':
             chat_ids = await loop.run_in_executor(None, redis_ops.smembers, key)
             chat_ids = [int(cid) for cid in chat_ids]
-            await client.edit_message(event.chat_id, event.message, f"Auto delete message whitelist chat IDs: {chat_ids}")
+            result = await event.respond(f"Chat ID {chat_ids} list.")
         else:
-            await client.edit_message(event.chat_id, event.message, "Invalid operation. Use 'add', 'remove', or 'list'.")
+            result = await event.respond("Invalid operation. Use 'add', 'remove', or 'list'.")
 
         await asyncio.sleep(5)
-        await event.delete()
+        await result.delete()
 
     except Exception as e:
         logger.error(f"Error in auto_dme_handler: {e}")
+        logger.error(traceback.format_exc())
 
 @schedule_cron("0 * * * *")
 async def auto_dme():
