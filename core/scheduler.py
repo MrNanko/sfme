@@ -22,9 +22,8 @@ import inspect
 
 logger = logging.getLogger(__name__)
 
-# 全局任务管理器
 class TaskManager:
-    """任务管理器"""
+    """Task Manager for managing asynchronous tasks and Telethon integration"""
 
     def __init__(self):
         self._tasks = {}
@@ -32,24 +31,66 @@ class TaskManager:
         self._loop = None
         self._executor = ThreadPoolExecutor(max_workers=10)
         self._loop_thread = None
-        self._lock = threading.Lock()  # 添加线程锁保护
+        self._lock = threading.Lock()
+
+        # Telethon's client and mode
+        self._telethon_client = None
+        self._telethon_mode = False
+
+    # Use telethon client to enable Telethon events loop
+    def enable_telethon_events_loop(self, telethon_client):
+        # Check if the client is already set
+        with self._lock:
+            self._telethon_client = telethon_client
+            self._telethon_mode = True
+            logger.info("TaskManager Telethon events loop enabled")
 
     def get_current_loop(self):
-        """获取当前可用的事件循环"""
+        """
+        Get the most appropriate event loop based on context
+
+        Priority order:
+        1. Current running event loop (if available)
+        2. Telethon client's event loop (if Telethon mode is enabled)
+        3. TaskManager's own event loop
+
+        Returns:
+            asyncio.AbstractEventLoop: The most appropriate event loop
+        """
         try:
-            # 优先返回当前运行的循环
-            return asyncio.get_running_loop()
+            # Try to get the current running event loop first
+            current_loop = asyncio.get_running_loop()
+
+            # If Telethon mode is enabled, verify loop compatibility
+            if self._telethon_mode and self._telethon_client and self._telethon_client.loop:
+                if current_loop == self._telethon_client.loop:
+                    logger.debug("Using Telethon's event loop (same as current loop)")
+                else:
+                    logger.debug("Current loop differs from Telethon's loop, using current loop anyway")
+
+            return current_loop
+
         except RuntimeError:
-            # 如果没有运行的循环，返回管理器的循环
+            # No running event loop, fall back to alternatives
+
+            # If Telethon mode is enabled and its loop available, use that
+            if self._telethon_mode and self._telethon_client and self._telethon_client.loop:
+                logger.debug("No running event loop, falling back to Telethon's event loop")
+                return self._telethon_client.loop
+
+            # Last resort: use TaskManager's own event loop
+            logger.debug("Using TaskManager's own event loop")
             return self._loop
 
     def start_background_loop(self):
-        """仅在必要时启动后台循环"""
-        with self._lock:  # 线程安全的启动检查
-            # 检查是否真的需要后台循环
+        with self._lock:
+            # If Telethon mode is enabled, try to use its event loop
+            if self._telethon_mode and self._telethon_client:
+                return self._start_with_telethon_support()
+
             try:
                 current_loop = asyncio.get_running_loop()
-                logger.info("检测到运行中的循环，不需要后台循环")
+                logger.info("Detected a running event loop, no need for background loop")
                 self._loop = current_loop
                 self._running = True
                 return
@@ -57,113 +98,142 @@ class TaskManager:
                 pass
 
             if self._loop_thread and self._loop_thread.is_alive():
-                logger.info("后台循环已存在，无需重复创建")
+                logger.info("Background loop already exists, no need to create again")
                 return
 
             def run_background_loop():
-                """在后台线程中运行事件循环"""
+                """Run the event loop in a background thread"""
                 try:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     self._loop = loop
                     self._running = True
 
-                    logger.info("后台事件循环已启动")
+                    logger.info("Background event loop started")
                     loop.run_forever()
 
                 except Exception as e:
-                    logger.error(f"后台循环运行出错: {e}")
+                    logger.error(f"Error running background loop: {e}")
                 finally:
-                    logger.info("后台事件循环已停止")
+                    logger.info("Background event loop stopped")
                     self._running = False
-                    self._loop = None  # 清理循环引用
+                    self._loop = None
 
             self._loop_thread = threading.Thread(target=run_background_loop, daemon=True)
             self._loop_thread.start()
 
-            # 更安全的等待循环启动
-            max_wait = 50  # 最多等待5秒
+            # Wait for the loop to start
+            max_wait = 50
             wait_count = 0
             while not self._running and wait_count < max_wait:
                 time.sleep(0.1)
                 wait_count += 1
 
             if not self._running:
-                raise RuntimeError("后台循环启动超时")
+                raise RuntimeError("Background loop startup timeout")
+
+    def _start_with_telethon_support(self):
+        try:
+            if not self._telethon_client.loop:
+                logger.warning("Telethon client event loop unavailable, using standard mode")
+                self._telethon_mode = False
+                return self.start_background_loop()
+
+            telethon_loop = self._telethon_client.loop
+            if telethon_loop.is_running():
+                logger.info("Using Telethon's event loop")
+                self._loop = telethon_loop
+                self._running = True
+            else:
+                logger.warning("Telethon loop not running, falling back to standard mode")
+                self._telethon_mode = False
+                return self.start_background_loop()
+
+        except Exception as e:
+            logger.error(f"Failed to start with Telethon support: {e}, falling back to standard mode")
+            self._telethon_mode = False
+            return self.start_background_loop()
 
     def add_task(self, task_id: str, task):
-        """添加任务"""
+        """Add task"""
         with self._lock:
-            # 检查任务ID冲突
             if task_id in self._tasks:
-                logger.warning(f"任务ID {task_id} 已存在，将替换旧任务")
+                logger.warning(f"Task ID {task_id} already exists, will replace old task")
                 self.remove_task(task_id)
 
             self._tasks[task_id] = task
-            logger.debug(f"任务 {task_id} 已添加到管理器")
+            logger.debug(f"Task {task_id} has been added to the manager")
 
     def remove_task(self, task_id: str):
-        """移除任务"""
+        """Remove a task"""
         with self._lock:
             task = self._tasks.pop(task_id, None)
             if task:
                 try:
+                    # Check if the task supports cancellation and completion status (async loop tasks)
                     if hasattr(task, 'cancel') and hasattr(task, 'done'):
                         if not task.done():
                             task.cancel()
-                            logger.debug(f"已取消Task任务: {task_id}")
+                            logger.debug(f"Canceled async loop Task: {task_id}")
+                    # For Futures, check if the task supports result retrieval and is still pending
                     elif hasattr(task, 'result'):
-                        # Future 对象
                         if not task.done():
                             task.cancel()
-                            logger.debug(f"已取消Future任务: {task_id}")
+                            logger.debug(f"Canceled Future task in async loop: {task_id}")
                 except Exception as e:
-                    logger.warning(f"取消任务 {task_id} 时出错: {e}")
+                    logger.warning(f"Error occurred while canceling task {task_id}: {e}")
 
     def cancel_all_tasks(self):
-        """取消所有任务"""
+        """Cancel all tasks"""
         with self._lock:
-            logger.info(f"正在取消 {len(self._tasks)} 个任务")
+            logger.info(f"Cancelling {len(self._tasks)} tasks")
 
-            for task_id, task in list(self._tasks.items()):  # 避免迭代时修改字典
+            for task_id, task in list(self._tasks.items()):
                 try:
+                    # Cancel async loop tasks if they are still running
                     if hasattr(task, 'cancel') and hasattr(task, 'done'):
                         if not task.done():
                             task.cancel()
+                    # Cancel future tasks if still pending
                     elif hasattr(task, 'result'):
                         if not task.done():
                             task.cancel()
                 except Exception as e:
-                    logger.warning(f"取消任务 {task_id} 时出错: {e}")
+                    logger.warning(f"Error occurred when cancelling task {task_id}: {e}")
 
             self._tasks.clear()
 
-            # 更安全的循环停止
-            if self._loop and not self._loop.is_closed() and self._running:
-                try:
-                    if self._loop.is_running():
-                        self._loop.call_soon_threadsafe(self._loop.stop)
-                        # 等待循环停止
-                        if self._loop_thread and self._loop_thread.is_alive():
-                            self._loop_thread.join(timeout=2.0)
-                except Exception as e:
-                    logger.warning(f"停止事件循环时出错: {e}")
-                finally:
-                    self._running = False
+            # Stop own event loop only when not in Telethon mode
+            if not self._telethon_mode:
+                if self._loop and not self._loop.is_closed() and self._running:
+                    try:
+                        if self._loop.is_running():
+                            self._loop.call_soon_threadsafe(self._loop.stop)
+                            if self._loop_thread and self._loop_thread.is_alive():
+                                self._loop_thread.join(timeout=2.0)
+                    except Exception as e:
+                        logger.warning(f"Error occurred when stopping the event loop: {e}")
+                    finally:
+                        self._running = False
+            else:
+                logger.debug("Telethon mode enabled; keeping event loop running")
+                self._running = False
 
     def get_task_count(self):
-        """获取任务数量"""
+        """Get the number of tasks."""
         with self._lock:
             return len(self._tasks)
 
     def get_task_info(self):
-        """获取详细任务信息"""
+        """Get detailed task information."""
         with self._lock:
             task_info = {}
             for task_id, task in self._tasks.items():
                 try:
+                    # Check if the task has a 'done' method to determine its completion status
                     if hasattr(task, 'done'):
                         status = "completed" if task.done() else "running"
+                        # Check if the completed task raised an exception
                         if task.done() and hasattr(task, 'exception'):
                             exception = task.exception()
                             if exception:
@@ -173,49 +243,59 @@ class TaskManager:
 
                     task_info[task_id] = {
                         "status": status,
-                        "type": type(task).__name__
+                        "type": type(task).__name__,
+                        "telethon_mode": self._telethon_mode
                     }
                 except Exception as e:
+                    # Handle errors encountered while retrieving task info
                     task_info[task_id] = {"status": f"error: {e}", "type": "unknown"}
 
             return task_info
 
     def cleanup(self):
-        """清理已完成的任务"""
+        """Clean up completed tasks"""
         with self._lock:
             completed_tasks = []
             for task_id, task in self._tasks.items():
                 try:
+                    # Check if the task is an asyncio Task or a Future, and determine if it's completed.
                     if hasattr(task, 'done') and task.done():
                         completed_tasks.append(task_id)
                     elif hasattr(task, 'result'):
+                        # Some Future objects use 'result' method for status checks.
                         if task.done():
                             completed_tasks.append(task_id)
                 except Exception as e:
-                    logger.warning(f"检查任务 {task_id} 状态时出错: {e}")
-                    completed_tasks.append(task_id)  # 有问题的任务也清理掉
+                    # If an error occurs when checking task status, log a warning and mark the task for cleanup.
+                    logger.warning(f"Error occurred while checking task {task_id} status: {e}")
+                    completed_tasks.append(task_id)
 
+            # Remove identified completed tasks from the task registry.
             for task_id in completed_tasks:
                 del self._tasks[task_id]
-                logger.debug(f"已清理完成的任务: {task_id}")
+                logger.debug(f"Cleaned up completed task: {task_id}")
 
+            # Return the count of tasks that were cleaned up.
             return len(completed_tasks)
 
 
 class DecoratorRegistry:
-    """装饰器注册表"""
+    """Decorator Registry"""
 
     def __init__(self):
+        # Initialize registry categories for different scheduling decorators
         self._registry = {
             'schedule_cron': [],
             'schedule_interval': [],
             'schedule_delay': [],
             'schedule_at': []
         }
+        # Mapping from function names to their callable objects for quick access
         self._function_mapping = {}
 
     def register_function(self, decorator_type: str, func: Callable, config: Dict = None):
-        """注册装饰器函数"""
+        """Register a decorated function"""
+        # Information about the function, including its metadata and optional configuration
         func_info = {
             'name': func.__name__,
             'function': func,
@@ -223,26 +303,30 @@ class DecoratorRegistry:
             'config': config or {},
         }
 
+        # Ensure the decorator type has a dedicated list in the registry
         if decorator_type not in self._registry:
             self._registry[decorator_type] = []
 
+        # Add function metadata to the appropriate decorator category
         self._registry[decorator_type].append(func_info)
+        # Map function name to its callable for easy retrieval later
         self._function_mapping[func.__name__] = func
-        logger.debug(f"注册装饰器函数: {decorator_type}.{func.__name__}")
+        logger.debug(f"Registered decorated function: {decorator_type}.{func.__name__}")
 
     def get_functions_by_type(self, decorator_type: str) -> List[Dict]:
-        """获取指定类型的所有函数"""
+        """Retrieve all functions registered under a specific decorator type"""
         return self._registry.get(decorator_type, [])
 
     def get_all_functions(self) -> Dict[str, List[Dict]]:
-        """获取所有注册的函数"""
+        """Retrieve all registered functions"""
         return self._registry.copy()
 
     def get_summary(self) -> Dict:
-        """获取注册摘要"""
+        """Get a summary of all registered functions"""
         summary = {}
         total_functions = 0
 
+        # Summarize count and names of functions for each decorator type
         for decorator_type, functions in self._registry.items():
             count = len(functions)
             total_functions += count
@@ -251,69 +335,75 @@ class DecoratorRegistry:
                 'functions': [f['name'] for f in functions]
             }
 
+        # Add the total number of registered functions to the summary
         summary['total'] = total_functions
         return summary
 
 
 class DecoratorDiscovery:
-    """装饰器函数自动发现器"""
+    """Decorator Function Auto-Discovery"""
 
     def __init__(self, package_name: str = None):
         self.package_name = package_name
         self.registry = registry
 
     def discover_handlers_package(self, handlers_package: str = "handlers"):
-        """自动发现handlers包中所有使用装饰器的函数"""
+        """Automatically discover all decorated functions within the handlers package"""
         discovered_functions = []
 
         try:
+            # Determine full package name for accurate importing
             if self.package_name and not handlers_package.startswith(self.package_name):
                 full_package_name = f"{self.package_name}.{handlers_package}"
             else:
                 full_package_name = handlers_package
 
-            logger.info(f"开始扫描包: {full_package_name}")
+            logger.info(f"Starting scan of package: {full_package_name}")
 
+            # Attempt to import the specified package
             try:
                 package = importlib.import_module(full_package_name)
             except ImportError as e:
-                logger.error(f"无法导入包 {full_package_name}: {e}")
+                logger.error(f"Failed to import package {full_package_name}: {e}")
                 return discovered_functions
 
+            # Ensure the imported object is a valid package with '__path__'
             if hasattr(package, '__path__'):
                 package_path = package.__path__
             else:
-                logger.warning(f"包 {full_package_name} 没有 __path__ 属性")
+                logger.warning(f"Package {full_package_name} lacks a '__path__' attribute")
                 return discovered_functions
 
+            # Iterate through modules in the package
             for importer, modname, ispkg in pkgutil.iter_modules(package_path, full_package_name + "."):
                 if ispkg:
-                    continue
+                    continue  # Skip sub-packages to avoid deeper recursion
 
                 try:
-                    logger.debug(f"扫描模块: {modname}")
+                    logger.debug(f"Scanning module: {modname}")
                     module = importlib.import_module(modname)
                     module_functions = self._scan_module_for_decorators(module)
                     discovered_functions.extend(module_functions)
 
                 except ImportError as e:
-                    logger.warning(f"无法导入模块 {modname}: {e}")
+                    logger.warning(f"Could not import module {modname}: {e}")
                     continue
                 except Exception as e:
-                    logger.error(f"扫描模块 {modname} 时出错: {e}")
+                    logger.error(f"Error occurred while scanning module {modname}: {e}")
                     continue
 
-            logger.info(f"发现 {len(discovered_functions)} 个装饰器函数")
+            logger.info(f"Discovered {len(discovered_functions)} decorated functions")
             return discovered_functions
 
         except Exception as e:
-            logger.error(f"扫描包 {handlers_package} 时出错: {e}")
+            logger.error(f"Error occurred while scanning package {handlers_package}: {e}")
             return discovered_functions
 
     def _scan_module_for_decorators(self, module) -> List[Dict]:
-        """扫描模块中的装饰器函数"""
+        """Scan module for functions using decorators"""
         found_functions = []
 
+        # Iterate over all functions in the module
         for name, obj in inspect.getmembers(module):
             if inspect.isfunction(obj):
                 decorator_info = self._get_decorator_info(obj)
@@ -325,12 +415,13 @@ class DecoratorDiscovery:
                         'decorator_type': decorator_info['type'],
                         'config': decorator_info.get('config', {})
                     })
-                    logger.debug(f"发现装饰器函数: {module.__name__}.{name} ({decorator_info['type']})")
+                    logger.debug(f"Found decorated function: {module.__name__}.{name} ({decorator_info['type']})")
 
         return found_functions
 
     def _get_decorator_info(self, func) -> Optional[Dict]:
-        """获取函数的装饰器信息"""
+        """Retrieve decorator details from function attributes"""
+        # Identify functions scheduled by cron expression
         if hasattr(func, 'task_id') and hasattr(func, 'cron_expression'):
             return {
                 'type': 'schedule_cron',
@@ -340,22 +431,24 @@ class DecoratorDiscovery:
                 }
             }
 
+        # Identify interval-scheduled functions
         if hasattr(func, 'task_id') and hasattr(func, '_schedule_interval'):
             return {
                 'type': 'schedule_interval',
                 'config': getattr(func, '_schedule_config', {})
             }
 
-        return None
+        return None  # No recognizable decorator attributes found
 
     def auto_start_discovered_functions(self, decorator_types: List[str] = None) -> Dict:
-        """自动启动发现的装饰器函数"""
+        """Automatically start the discovered decorated functions"""
         if decorator_types is None:
             decorator_types = ['schedule_cron', 'schedule_interval', 'schedule_delay', 'schedule_at']
 
         started_tasks = {}
         failed_tasks = {}
 
+        # Retrieve all functions from the registry
         all_functions = self.registry.get_all_functions()
 
         for decorator_type in decorator_types:
@@ -366,15 +459,15 @@ class DecoratorDiscovery:
             failed_tasks[decorator_type] = []
 
             functions = all_functions[decorator_type]
-            logger.info(f"启动 {len(functions)} 个 {decorator_type} 任务")
+            logger.info(f"Starting {len(functions)} tasks of type {decorator_type}")
 
             for func_info in functions:
                 try:
                     func = func_info['function']
                     func_name = func_info['name']
 
-                    logger.info(f"启动任务: {func_name} ({decorator_type})")
-                    task_result = func()
+                    logger.info(f"Starting task: {func_name} ({decorator_type})")
+                    task_result = func()  # Execute the function
 
                     started_tasks[decorator_type].append({
                         'name': func_name,
@@ -382,16 +475,17 @@ class DecoratorDiscovery:
                         'task_result': task_result
                     })
 
-                    logger.info(f"任务启动成功: {func_name}")
+                    logger.info(f"Task started successfully: {func_name}")
 
                 except Exception as e:
-                    logger.error(f"启动任务失败: {func_info['name']}, 错误: {e}")
+                    logger.error(f"Failed to start task: {func_info['name']}, Error: {e}")
                     failed_tasks[decorator_type].append({
                         'name': func_info['name'],
                         'module': func_info['module'],
                         'error': str(e)
                     })
 
+        # Summarize results of task initiation
         return {
             'started': started_tasks,
             'failed': failed_tasks,
@@ -399,12 +493,11 @@ class DecoratorDiscovery:
             'total_failed': sum(len(tasks) for tasks in failed_tasks.values())
         }
 
-# ================ CronParser 类 ================
 
 class CronParser:
-    """Cron表达式解析器"""
+    """Cron Expression Parser"""
 
-    # 星期名称映射
+    # Mapping of weekday names to numerical values
     WEEKDAY_NAMES = {
         'sun': 0, 'sunday': 0,
         'mon': 1, 'monday': 1,
@@ -415,7 +508,7 @@ class CronParser:
         'sat': 6, 'saturday': 6
     }
 
-    # 月份名称映射
+    # Mapping of month names to numerical values
     MONTH_NAMES = {
         'jan': 1, 'january': 1,
         'feb': 2, 'february': 2,
@@ -432,24 +525,25 @@ class CronParser:
     }
 
     def __init__(self, cron_expression: str):
-        """初始化Cron解析器"""
+        """Initialize the Cron parser."""
         self.cron_expression = cron_expression.strip()
         self.fields = self._parse_expression()
 
     def _parse_expression(self) -> dict:
-        """解析Cron表达式"""
+        """Parse the Cron expression into individual time fields."""
         parts = self.cron_expression.split()
 
         if len(parts) == 5:
-            # 5位格式: 分 时 日 月 周
+            # 5-field format: minute hour day month weekday
             minute, hour, day, month, weekday = parts
-            second = "0"  # 默认0秒
+            second = "0"  # Default second to 0
         elif len(parts) == 6:
-            # 6位格式: 秒 分 时 日 月 周
+            # 6-field format: second minute hour day month weekday
             second, minute, hour, day, month, weekday = parts
         else:
-            raise ValueError(f"无效的Cron表达式: {self.cron_expression}")
+            raise ValueError(f"Invalid Cron expression: {self.cron_expression}")
 
+        # Parse individual fields, handling wildcards, ranges, and names
         return {
             'second': self._parse_field(second, 0, 59),
             'minute': self._parse_field(minute, 0, 59),
@@ -461,22 +555,22 @@ class CronParser:
 
     def _parse_field(self, field: str, min_val: int, max_val: int,
                      name_mapping: dict = None) -> set:
-        """解析单个字段"""
+        """Parse individual field of a Cron expression."""
         if field == '*':
             return set(range(min_val, max_val + 1))
 
         values = set()
 
-        # 处理逗号分隔的多个值
+        # Process comma-separated values
         for part in field.split(','):
             part = part.strip()
 
-            # 处理名称映射
+            # Handle named fields (e.g., Jan, Mon)
             if name_mapping:
                 for name, value in name_mapping.items():
                     part = re.sub(rf'\b{name}\b', str(value), part, flags=re.IGNORECASE)
 
-            # 处理范围和步长
+            # Handle steps (e.g., */5)
             if '/' in part:
                 range_part, step = part.split('/', 1)
                 step = int(step)
@@ -484,7 +578,7 @@ class CronParser:
                 range_part = part
                 step = 1
 
-            # 处理范围
+            # Handle ranges (e.g., 1-5)
             if '-' in range_part:
                 start, end = range_part.split('-', 1)
                 start = int(start)
@@ -495,150 +589,186 @@ class CronParser:
             else:
                 start = end = int(range_part)
 
-            # 验证范围
+            # Validate ranges
             if start < min_val or end > max_val or start > end:
-                raise ValueError(f"字段值超出范围: {part}")
+                raise ValueError(f"Field value out of range: {part}")
 
-            # 添加值
+            # Add computed range values to set
             values.update(range(start, end + 1, step))
 
         return values
 
     def get_next_run_time(self, current_time: datetime = None) -> datetime:
-        """计算下次运行时间 - 修复版本"""
+        """Calculate the next run time for the Cron expression (fixed version)."""
         if current_time is None:
             current_time = datetime.now()
 
-        # 修复关键问题：总是从下一秒开始搜索，不管秒字段包含什么
+        # Crucial fix: Always start searching from the next second
         next_time = current_time.replace(microsecond=0) + timedelta(seconds=1)
 
-        # 最多尝试4年（防止无限循环）
-        max_attempts = 4 * 365 * 24 * 60 * 60  # 改为秒数，更精确
+        # Prevent infinite loops by limiting search to 4 years (more precisely, in seconds)
+        max_attempts = 4 * 365 * 24 * 60 * 60
         attempts = 0
 
         while attempts < max_attempts:
             if self._matches_time(next_time):
                 return next_time
 
-            # 递增到下一秒
+            # Increment time by one second for next check
             next_time += timedelta(seconds=1)
             attempts += 1
 
-        raise ValueError(f"无法找到匹配的执行时间: {self.cron_expression}")
+        raise ValueError(f"Could not find matching execution time: {self.cron_expression}")
 
     def _matches_time(self, dt: datetime) -> bool:
-        """检查时间是否匹配Cron表达式"""
-        # 检查基本时间字段
+        """Check if a datetime matches the Cron expression."""
+        # Check fundamental time components first
         if (dt.second not in self.fields['second'] or
                 dt.minute not in self.fields['minute'] or
                 dt.hour not in self.fields['hour'] or
                 dt.month not in self.fields['month']):
             return False
 
-        # 检查日期和星期（只要其中一个匹配即可）
+        # Evaluate day of month and weekday fields
         day_match = dt.day in self.fields['day']
         weekday_match = dt.weekday() in self._convert_weekday(self.fields['weekday'])
 
-        # 如果day和weekday都不是*，则需要其中一个匹配
+        # Determine wildcard status for day and weekday fields
         day_is_wildcard = self.fields['day'] == set(range(1, 32))
         weekday_is_wildcard = self.fields['weekday'] == set(range(0, 7))
 
+        # Decide match logic based on wildcard status
         if day_is_wildcard and weekday_is_wildcard:
-            return True
+            return True  # Both fields are wildcards
         elif day_is_wildcard:
             return weekday_match
         elif weekday_is_wildcard:
             return day_match
         else:
+            # Cron standard: match if either field matches when both are restricted
             return day_match or weekday_match
 
     def _convert_weekday(self, cron_weekdays: set) -> set:
         """
-        转换星期格式
+        Convert Cron weekday numbering to Python's:
         Cron: 0=Sunday, 1=Monday, ..., 6=Saturday
         Python: 0=Monday, 1=Tuesday, ..., 6=Sunday
         """
         python_weekdays = set()
         for cron_day in cron_weekdays:
-            if cron_day == 0:  # Sunday
+            if cron_day == 0:  # Sunday in Cron equals 6 in Python
                 python_weekdays.add(6)
-            else:  # Monday-Saturday
-                python_weekdays.add(cron_day - 1)
+            else:
+                python_weekdays.add(cron_day - 1)  # Adjust all other days
         return python_weekdays
 
 
-# ================ 装饰器辅助函数 ================
+# ================ Decorator Helper Functions ================
 
-def _create_task_smartly(coro, task_id: str):
-    """创建任务 - 所有装饰器通用的策略"""
-    task = None
-
+def _create_task(coro, task_id: str):
+    """Task creation - prioritize Telethon event loop"""
     try:
-        # 策略1: 尝试使用当前运行的事件循环（异步环境）
-        loop = asyncio.get_running_loop()
-        logger.debug(f"检测到运行中的事件循环，直接使用")
-        task = loop.create_task(coro)
+        # Strategy 1: If Telethon mode is enabled, prefer using the Telethon event loop
+        if task_manager._telethon_mode and task_manager._telethon_client:
+            telethon_loop = task_manager._telethon_client.loop
+            if telethon_loop and not telethon_loop.is_closed():
+                try:
+                    # Check if currently inside an event loop
+                    current_loop = asyncio.get_running_loop()
+                    if current_loop == telethon_loop:
+                        # Directly create the task in the Telethon event loop
+                        logger.debug(f"Creating task in Telethon event loop: {task_id}")
+                        task = current_loop.create_task(coro)
+                        task_manager._loop = current_loop
+                        task_manager._running = True
+                        return task
+                    else:
+                        # Cross-loop scheduling: submit the coroutine to Telethon loop
+                        logger.debug(f"Scheduling task to Telethon loop from another loop: {task_id}")
+                        future = asyncio.run_coroutine_threadsafe(coro, telethon_loop)
+                        return future
+                except RuntimeError:
+                    # No current event loop, directly schedule to Telethon loop
+                    logger.debug(f"Scheduling task to Telethon loop (no current loop): {task_id}")
+                    future = asyncio.run_coroutine_threadsafe(coro, telethon_loop)
+                    return future
 
-        # 更新任务管理器状态
-        task_manager._loop = loop
-        task_manager._running = True
+        # Strategy 2: Try to use the currently running event loop
+        try:
+            current_loop = asyncio.get_running_loop()
+            logger.debug(f"Creating task in current event loop: {task_id}")
+            task = current_loop.create_task(coro)
+            task_manager._loop = current_loop
+            task_manager._running = True
+            return task
+        except RuntimeError:
+            # No running event loop found in this context
+            pass
 
-    except RuntimeError:
-        # 策略2: 没有运行的循环，检查是否已有后台循环
-        logger.debug(f"没有运行的事件循环，检查后台循环状态")
-
+        # Strategy 3: Use or create a background event loop
         if task_manager._running and task_manager._loop and not task_manager._loop.is_closed():
-            # 使用现有的后台循环
-            logger.debug(f"使用现有后台循环")
+            logger.debug(f"Creating task in existing background event loop: {task_id}")
             future = asyncio.run_coroutine_threadsafe(coro, task_manager._loop)
-            task = future
+            return future
         else:
-            # 策略3: 创建新的后台循环（仅作为最后手段）
-            logger.info(f"创建新的后台事件循环")
+            logger.info(f"Starting background event loop for task: {task_id}")
             task_manager.start_background_loop()
             future = asyncio.run_coroutine_threadsafe(coro, task_manager._loop)
-            task = future
+            return future
 
-    return task
+    except Exception as e:
+        # Log and raise if task creation fails
+        logger.error(f"Failed to create task {task_id}: {e}")
+        raise
 
-def _execute_function_smartly(func, args, kwargs):
-    """执行函数 - 处理同步/异步函数"""
+def _execute_function(func, args, kwargs):
+    """Execute function – handles synchronous or asynchronous functions"""
+    # Check if the provided function is asynchronous (coroutine-based)
     if asyncio.iscoroutinefunction(func):
+        # Directly return coroutine object for asynchronous execution
         return func(*args, **kwargs)
     else:
-        # 获取当前循环来执行同步函数
+        # Obtain the current event loop to execute synchronous functions asynchronously
         try:
             loop = asyncio.get_running_loop()
+            # Execute synchronous function in separate thread using executor
             return loop.run_in_executor(task_manager._executor, lambda: func(*args, **kwargs))
         except RuntimeError:
-            # 如果没有运行循环，直接执行
+            # If no event loop is running, execute the synchronous function directly
             return func(*args, **kwargs)
 
-# ================ 错误处理辅助函数 ================
+# ================ Error Handling Helper Functions ================
 
-async def _handle_error_smartly(on_error: Callable, error: Exception, func: Callable, args, kwargs):
-    """错误处理"""
+async def _handle_error(on_error: Callable, error: Exception, func: Callable, args, kwargs):
+    """Smart error handling"""
+    # Check if the provided error handler is an asynchronous function
     if asyncio.iscoroutinefunction(on_error):
+        # Directly await the coroutine-based error handler
         await on_error(error, func, args, kwargs)
     else:
         try:
+            # Attempt to retrieve the current running event loop
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(task_manager._executor,
-                                       lambda: on_error(error, func, args, kwargs))
+            # Run synchronous error handler in a separate thread using the executor
+            await loop.run_in_executor(
+                task_manager._executor,
+                lambda: on_error(error, func, args, kwargs)
+            )
         except RuntimeError:
+            # No event loop running; directly call the synchronous error handler
             on_error(error, func, args, kwargs)
 
-# ================ schedule_interval 装饰器 ================
+# ================ schedule_interval Decorator ================
 
 def schedule_interval(seconds: int = None, minutes: int = None, hours: int = None,
                       immediate: bool = False, task_id: str = None,
                       max_instances: int = 1, on_error: Callable = None):
 
     def decorator(func: Callable):
-        # 计算总间隔时间（秒）
+        # Calculate the total interval time (in seconds)
         total_seconds = (seconds or 0) + (minutes or 0) * 60 + (hours or 0) * 3600
         if total_seconds <= 0:
-            raise ValueError("必须指定正数的时间间隔")
+            raise ValueError("A positive interval time must be specified")
 
         actual_task_id = task_id or f"interval_{func.__name__}_{id(func)}"
 
@@ -649,77 +779,77 @@ def schedule_interval(seconds: int = None, minutes: int = None, hours: int = Non
             async def interval_task():
                 nonlocal instance_count
 
-                logger.info(f"间隔任务已启动: {actual_task_id}")
-                logger.debug(f"间隔: {total_seconds}秒")
+                logger.info(f"Interval task started: {actual_task_id}")
+                logger.debug(f"Interval: {total_seconds} seconds")
 
-                # 立即执行
+                # Execute immediately if specified
                 if immediate:
                     try:
                         if asyncio.iscoroutinefunction(func):
                             await func(*args, **kwargs)
                         else:
-                            result = await _execute_function_smartly(func, args, kwargs)
+                            result = await _execute_function(func, args, kwargs)
                             if asyncio.iscoroutine(result):
                                 await result
 
-                        logger.info(f"任务 {actual_task_id} 立即执行完成")
+                        logger.info(f"Task {actual_task_id} executed immediately")
                     except Exception as e:
-                        logger.error(f"任务 {actual_task_id} 立即执行失败: {e}")
+                        logger.error(f"Task {actual_task_id} immediate execution failed: {e}")
                         if on_error:
                             try:
-                                await _handle_error_smartly(on_error, e, func, args, kwargs)
+                                await _handle_error(on_error, e, func, args, kwargs)
                             except Exception:
                                 pass
 
-                # 定时循环执行
+                # Loop for scheduled interval execution
                 while True:
                     await asyncio.sleep(total_seconds)
 
-                    # 检查并发实例数
+                    # Check the number of concurrent instances
                     if instance_count >= max_instances:
-                        logger.warning(f"任务 {actual_task_id} 超过最大并发数 {max_instances}，跳过本次执行")
+                        logger.warning(f"Task {actual_task_id} exceeds max instances {max_instances}, skipping execution")
                         continue
 
                     instance_count += 1
 
                     try:
                         execution_start = datetime.now()
-                        logger.debug(f"执行间隔任务 {actual_task_id}: {execution_start.strftime('%H:%M:%S')}")
+                        logger.debug(f"Executing interval task {actual_task_id}: {execution_start.strftime('%H:%M:%S')}")
 
                         if asyncio.iscoroutinefunction(func):
                             await func(*args, **kwargs)
                         else:
-                            result = await _execute_function_smartly(func, args, kwargs)
+                            result = await _execute_function(func, args, kwargs)
                             if asyncio.iscoroutine(result):
                                 await result
 
                         execution_end = datetime.now()
                         execution_time = (execution_end - execution_start).total_seconds()
                         logger.info(
-                            f"间隔任务完成: {execution_end.strftime('%H:%M:%S')} (耗时: {execution_time:.2f}秒)")
+                            f"Interval task completed: {execution_end.strftime('%H:%M:%S')} (Duration: {execution_time:.2f}s)")
 
                     except Exception as e:
-                        logger.error(f"间隔任务 {actual_task_id} 执行失败: {e}")
+                        logger.error(f"Interval task {actual_task_id} execution failed: {e}")
                         if on_error:
                             try:
-                                await _handle_error_smartly(on_error, e, func, args, kwargs)
+                                await _handle_error(on_error, e, func, args, kwargs)
                             except Exception as err_e:
-                                logger.error(f"错误处理函数执行失败: {err_e}")
+                                logger.error(f"Error handler execution failed: {err_e}")
                     finally:
                         instance_count -= 1
 
-            # 使用任务创建策略
-            task = _create_task_smartly(interval_task(), actual_task_id)
+            # Use the smart task creation strategy
+            task = _create_task(interval_task(), actual_task_id)
             task_manager.add_task(actual_task_id, task)
 
-            logger.info(f"间隔任务已加入调度: {actual_task_id}, 间隔: {total_seconds}秒")
+            logger.info(f"Interval task added to scheduler: {actual_task_id}, interval: {total_seconds} seconds")
             return task
 
-        # 添加任务控制方法
+        # Add task control method
         wrapper.stop = lambda: task_manager.remove_task(actual_task_id)
         wrapper.task_id = actual_task_id
 
-        # 注册到装饰器注册表
+        # Register in the decorator registry
         registry.register_function('schedule_interval', wrapper, {
             'task_id': actual_task_id,
             'seconds': seconds or 0,
@@ -735,61 +865,63 @@ def schedule_interval(seconds: int = None, minutes: int = None, hours: int = Non
     return decorator
 
 
-# ================ schedule_delay 装饰器 ================
+# ================ schedule_delay Decorator ================
 
 def schedule_delay(seconds: int = None, minutes: int = None, hours: int = None,
                    task_id: str = None, on_error: Callable = None):
 
     def decorator(func: Callable):
+        # Calculate the total delay time in seconds
         total_seconds = (seconds or 0) + (minutes or 0) * 60 + (hours or 0) * 3600
         if total_seconds <= 0:
-            raise ValueError("必须指定正数的延迟时间")
+            raise ValueError("A positive delay time must be specified")
 
         actual_task_id = task_id or f"delay_{func.__name__}_{id(func)}"
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             async def delay_task():
-                logger.info(f"延迟任务已启动: {actual_task_id}, 延迟: {total_seconds}秒")
+                logger.info(f"Delay task started: {actual_task_id}, delay: {total_seconds} seconds")
 
                 await asyncio.sleep(total_seconds)
 
                 try:
                     execution_start = datetime.now()
-                    logger.debug(f"执行延迟任务 {actual_task_id}: {execution_start.strftime('%H:%M:%S')}")
+                    logger.debug(f"Executing delay task {actual_task_id}: {execution_start.strftime('%H:%M:%S')}")
 
                     if asyncio.iscoroutinefunction(func):
                         result = await func(*args, **kwargs)
                     else:
-                        result = await _execute_function_smartly(func, args, kwargs)
+                        result = await _execute_function(func, args, kwargs)
                         if asyncio.iscoroutine(result):
                             result = await result
 
                     execution_end = datetime.now()
                     execution_time = (execution_end - execution_start).total_seconds()
-                    logger.info(f"延迟任务完成: {execution_end.strftime('%H:%M:%S')} (耗时: {execution_time:.2f}秒)")
+                    logger.info(f"Delay task completed: {execution_end.strftime('%H:%M:%S')} (Duration: {execution_time:.2f}s)")
                     return result
 
                 except Exception as e:
-                    logger.error(f"延迟任务 {actual_task_id} 执行失败: {e}")
+                    logger.error(f"Delay task {actual_task_id} execution failed: {e}")
                     if on_error:
                         try:
-                            await _handle_error_smartly(on_error, e, func, args, kwargs)
+                            await _handle_error(on_error, e, func, args, kwargs)
                         except Exception:
                             pass
                     raise
 
-            # 使用任务创建策略
-            task = _create_task_smartly(delay_task(), actual_task_id)
+            # Use smart task creation strategy
+            task = _create_task(delay_task(), actual_task_id)
             task_manager.add_task(actual_task_id, task)
 
-            logger.info(f"延迟任务已加入调度: {actual_task_id}")
+            logger.info(f"Delay task added to scheduler: {actual_task_id}")
             return task
 
+        # Add stop control and task_id attributes to the wrapper
         wrapper.stop = lambda: task_manager.remove_task(actual_task_id)
         wrapper.task_id = actual_task_id
 
-        # 注册到装饰器注册表
+        # Register in the decorator registry
         registry.register_function('schedule_delay', wrapper, {
             'task_id': actual_task_id,
             'seconds': seconds or 0,
@@ -803,88 +935,90 @@ def schedule_delay(seconds: int = None, minutes: int = None, hours: int = None,
     return decorator
 
 
-# ================ schedule_at 装饰器 ================
+# ================ schedule_at Decorator ================
 
 def schedule_at(hour: int, minute: int = 0, second: int = 0,
                 task_id: str = None, on_error: Callable = None):
 
     def decorator(func: Callable):
+        # Validate the time parameters
         if not (0 <= hour <= 23) or not (0 <= minute <= 59) or not (0 <= second <= 59):
-            raise ValueError("时间参数超出有效范围")
+            raise ValueError("Time parameters are out of valid range")
 
         actual_task_id = task_id or f"daily_{func.__name__}_{id(func)}"
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             async def daily_task():
-                logger.info(f"每日定时任务已启动: {actual_task_id}")
-                logger.debug(f"执行时间: {hour:02d}:{minute:02d}:{second:02d}")
+                logger.info(f"Daily scheduled task started: {actual_task_id}")
+                logger.debug(f"Scheduled execution time: {hour:02d}:{minute:02d}:{second:02d}")
 
                 while True:
-                    # 计算下次执行时间
+                    # Calculate the next execution time
                     now = datetime.now()
                     next_run = now.replace(hour=hour, minute=minute, second=second, microsecond=0)
 
-                    # 如果今天的时间已过，则安排到明天
+                    # If the scheduled time for today has passed, schedule for tomorrow
                     if next_run <= now:
                         next_run += timedelta(days=1)
 
-                    # 等待到执行时间
+                    # Wait until the execution time
                     wait_seconds = (next_run - now).total_seconds()
-                    logger.debug(f"任务 {actual_task_id} 将在 {next_run} 执行 (等待 {wait_seconds:.1f} 秒)")
+                    logger.debug(f"Task {actual_task_id} will run at {next_run} (waiting {wait_seconds:.1f} seconds)")
 
-                    # 可中断的睡眠
-                    sleep_interval = min(wait_seconds, 60)  # 最多睡眠60秒
+                    # Interruptible sleep: sleep in up to 60-second intervals to allow for cancellation checks
+                    sleep_interval = min(wait_seconds, 60)  # Maximum 60 seconds per sleep
                     total_slept = 0
 
                     while total_slept < wait_seconds:
                         await asyncio.sleep(sleep_interval)
                         total_slept += sleep_interval
 
-                        # 检查是否被取消
+                        # Check if the task has been cancelled
                         if asyncio.current_task().cancelled():
-                            logger.info(f"任务 {actual_task_id} 被取消")
+                            logger.info(f"Task {actual_task_id} was cancelled")
                             return
 
                         remaining = wait_seconds - total_slept
                         sleep_interval = min(remaining, 60)
 
-                    # 执行任务
+                    # Execute the task at the scheduled time
                     try:
                         execution_start = datetime.now()
-                        logger.info(f"执行每日任务 {actual_task_id}: {execution_start.strftime('%H:%M:%S')}")
+                        logger.info(f"Executing daily task {actual_task_id}: {execution_start.strftime('%H:%M:%S')}")
 
                         if asyncio.iscoroutinefunction(func):
                             await func(*args, **kwargs)
                         else:
-                            result = await _execute_function_smartly(func, args, kwargs)
+                            result = await _execute_function(func, args, kwargs)
                             if asyncio.iscoroutine(result):
                                 await result
 
                         execution_end = datetime.now()
                         execution_time = (execution_end - execution_start).total_seconds()
                         logger.info(
-                            f"每日任务完成: {execution_end.strftime('%H:%M:%S')} (耗时: {execution_time:.2f}秒)")
+                            f"Daily task completed: {execution_end.strftime('%H:%M:%S')} (Duration: {execution_time:.2f}s)")
 
                     except Exception as e:
-                        logger.error(f"每日任务 {actual_task_id} 执行失败: {e}")
+                        logger.error(f"Daily task {actual_task_id} execution failed: {e}")
                         if on_error:
                             try:
-                                await _handle_error_smartly(on_error, e, func, args, kwargs)
+                                await _handle_error(on_error, e, func, args, kwargs)
                             except Exception:
                                 pass
 
-            # 使用任务创建策略
-            task = _create_task_smartly(daily_task(), actual_task_id)
+            # Use the smart task creation strategy
+            task = _create_task(daily_task(), actual_task_id)
             task_manager.add_task(actual_task_id, task)
 
-            logger.info(f"每日定时任务已加入调度: {actual_task_id}, 执行时间: {hour:02d}:{minute:02d}:{second:02d}")
+            logger.info(f"Daily scheduled task added: {actual_task_id}, execution time: {hour:02d}:{minute:02d}:{second:02d}")
             return task
 
+        # Add stop control and task_id attributes to the wrapper
         wrapper.stop = lambda: task_manager.remove_task(actual_task_id)
         wrapper.task_id = actual_task_id
 
-        # 注册到装饰器注册表
+        # Register in the decorator registry
         registry.register_function('schedule_at', wrapper, {
             'task_id': actual_task_id,
             'hour': hour,
@@ -898,19 +1032,19 @@ def schedule_at(hour: int, minute: int = 0, second: int = 0,
     return decorator
 
 
-# ================ schedule_cron 装饰器 ================
+# ================ schedule_cron Decorator ================
 
 def schedule_cron(cron_expression: str, task_id: str = None,
                   on_error: Callable = None, max_instances: int = 1):
 
     def decorator(func: Callable):
-        # 解析Cron表达式
+        # Parse the Cron expression
         try:
             parser = CronParser(cron_expression)
-            logger.info(f"Cron表达式解析成功: {cron_expression}")
-            logger.debug(f"解析后的字段: {parser.fields}")
+            logger.info(f"Cron expression parsed successfully: {cron_expression}")
+            logger.debug(f"Parsed fields: {parser.fields}")
         except Exception as e:
-            raise ValueError(f"无效的Cron表达式 '{cron_expression}': {e}")
+            raise ValueError(f"Invalid Cron expression '{cron_expression}': {e}")
 
         actual_task_id = task_id or f"cron_{func.__name__}_{id(func)}"
 
@@ -921,93 +1055,93 @@ def schedule_cron(cron_expression: str, task_id: str = None,
             async def cron_task():
                 nonlocal instance_count
 
-                logger.info(f"Cron任务已启动: {actual_task_id}")
-                logger.debug(f"表达式: {cron_expression}")
+                logger.info(f"Cron task started: {actual_task_id}")
+                logger.debug(f"Expression: {cron_expression}")
 
                 while True:
                     try:
-                        # 计算下次执行时间
+                        # Calculate next run time
                         current_time = datetime.now()
                         next_run = parser.get_next_run_time(current_time)
                         wait_seconds = (next_run - current_time).total_seconds()
 
                         if wait_seconds <= 0:
-                            logger.warning(f"等待时间异常: {wait_seconds}，重新计算")
-                            await asyncio.sleep(1)  # 避免忙等待
+                            logger.warning(f"Abnormal wait time: {wait_seconds}, recalculating")
+                            await asyncio.sleep(1)  # Avoid busy waiting
                             continue
 
-                        logger.debug(f"任务 {actual_task_id} 下次执行: {next_run} (等待 {wait_seconds:.1f}秒)")
+                        logger.debug(f"Task {actual_task_id} will next run at: {next_run} (waiting {wait_seconds:.1f} seconds)")
 
-                        # 可中断的睡眠
-                        sleep_interval = min(wait_seconds, 60)  # 最多睡眠60秒
+                        # Interruptible sleep
+                        sleep_interval = min(wait_seconds, 60)  # Sleep up to 60 seconds at a time
                         total_slept = 0
 
                         while total_slept < wait_seconds:
                             await asyncio.sleep(sleep_interval)
                             total_slept += sleep_interval
 
-                            # 检查是否被取消
+                            # Check if task has been cancelled
                             if asyncio.current_task().cancelled():
-                                logger.info(f"任务 {actual_task_id} 被取消")
+                                logger.info(f"Task {actual_task_id} was cancelled")
                                 return
 
                             remaining = wait_seconds - total_slept
                             sleep_interval = min(remaining, 60)
 
-                        # 检查并发实例数
+                        # Check concurrent instance limit
                         if instance_count >= max_instances:
-                            logger.warning(f"任务 {actual_task_id} 超过最大并发数，跳过执行")
+                            logger.warning(f"Task {actual_task_id} exceeds max instances, skipping execution")
                             continue
 
                         instance_count += 1
 
                         try:
-                            # 执行任务
+                            # Execute the scheduled task
                             execution_start = datetime.now()
-                            logger.info(f"执行Cron任务 {actual_task_id}: {execution_start.strftime('%H:%M:%S')}")
+                            logger.info(f"Executing Cron task {actual_task_id}: {execution_start.strftime('%H:%M:%S')}")
 
                             if asyncio.iscoroutinefunction(func):
                                 await func(*args, **kwargs)
                             else:
-                                result = await _execute_function_smartly(func, args, kwargs)
+                                result = await _execute_function(func, args, kwargs)
                                 if asyncio.iscoroutine(result):
                                     await result
 
                             execution_end = datetime.now()
                             execution_time = (execution_end - execution_start).total_seconds()
                             logger.info(
-                                f"Cron任务完成: {execution_end.strftime('%H:%M:%S')} (耗时: {execution_time:.2f}秒)")
+                                f"Cron task completed: {execution_end.strftime('%H:%M:%S')} (Duration: {execution_time:.2f}s)")
 
                         except Exception as e:
-                            logger.error(f"Cron任务执行失败: {e}")
+                            logger.error(f"Cron task execution failed: {e}")
                             if on_error:
                                 try:
-                                    await _handle_error_smartly(on_error, e, func, args, kwargs)
+                                    await _handle_error(on_error, e, func, args, kwargs)
                                 except Exception as err_e:
-                                    logger.error(f"错误处理失败: {err_e}")
+                                    logger.error(f"Error handler execution failed: {err_e}")
                         finally:
                             instance_count -= 1
 
                     except asyncio.CancelledError:
-                        logger.info(f"Cron任务 {actual_task_id} 被取消")
+                        logger.info(f"Cron task {actual_task_id} was cancelled")
                         break
                     except Exception as e:
-                        logger.error(f"Cron调度失败: {e}")
-                        await asyncio.sleep(5)  # 出错后等待更长时间
+                        logger.error(f"Cron scheduling failed: {e}")
+                        await asyncio.sleep(5)  # Wait longer after error
 
-            # 使用任务创建策略
-            task = _create_task_smartly(cron_task(), actual_task_id)
+            # Use the smart task creation strategy
+            task = _create_task(cron_task(), actual_task_id)
             task_manager.add_task(actual_task_id, task)
 
-            logger.info(f"Cron任务已加入调度: {actual_task_id}")
+            logger.info(f"Cron task added to scheduler: {actual_task_id}")
             return task
 
-        # 添加控制方法
+        # Add control methods
         wrapper.stop = lambda: task_manager.remove_task(actual_task_id)
         wrapper.task_id = actual_task_id
         wrapper.cron_expression = cron_expression
 
-        # 注册到装饰器注册表
+        # Register to the decorator registry
         registry.register_function('schedule_cron', wrapper, {
             'task_id': actual_task_id,
             'cron_expression': cron_expression,
@@ -1022,51 +1156,51 @@ def schedule_cron(cron_expression: str, task_id: str = None,
 def auto_discover_and_start_tasks(package_name: str = None, handlers_package: str = "handlers",
                                   decorator_types: List[str] = None) -> Dict:
     """
-    自动发现并启动装饰器任务的便捷函数
+    Convenience function for auto-discovering and starting decorator tasks
 
     Args:
-        package_name: 主包名（如 "sfme"）
-        handlers_package: handlers包名（如 "handlers"）
-        decorator_types: 要启动的装饰器类型
+        package_name: Main package name (e.g. "sfme")
+        handlers_package: Handlers package name (e.g. "handlers")
+        decorator_types: Types of decorators to start
 
     Returns:
-        启动结果字典
+        Dictionary of start results
     """
     if package_name:
         discovery.package_name = package_name
 
-    # 发现装饰器函数
-    logger.info("开始自动发现装饰器函数...")
+    # Discover decorator functions
+    logger.info("Starting auto-discovery of decorator functions...")
     discovered = discovery.discover_handlers_package(handlers_package)
 
     if not discovered:
-        logger.warning("未发现任何装饰器函数")
+        logger.warning("No decorator functions discovered")
         return {'started': {}, 'failed': {}, 'total_started': 0, 'total_failed': 0}
 
-    # 显示发现的函数
-    logger.info(f"发现的装饰器函数:")
+    # Show discovered functions
+    logger.info("Discovered decorator functions:")
     for func_info in discovered:
         logger.info(f"  - {func_info['module']}.{func_info['name']} ({func_info['decorator_type']})")
 
-    # 自动启动发现的函数
-    logger.info("开始启动发现的装饰器函数...")
+    # Auto start discovered functions
+    logger.info("Starting discovered decorator functions...")
     result = discovery.auto_start_discovered_functions(decorator_types)
 
-    logger.info(f"启动结果: 成功 {result['total_started']} 个, 失败 {result['total_failed']} 个")
+    logger.info(f"Start results: {result['total_started']} succeeded, {result['total_failed']} failed")
     return result
 
 
 def get_registry_summary() -> Dict:
-    """获取注册表摘要"""
+    """Get registry summary"""
     return registry.get_summary()
 
 
 def stop_all_tasks():
-    """停止所有任务"""
+    """Stop all tasks"""
     task_manager.cancel_all_tasks()
-    logger.info("所有任务已停止")
+    logger.info("All tasks have been stopped")
 
-# 全局任务管理器实例
+# Global task manager instances
 task_manager = TaskManager()
 registry = DecoratorRegistry()
 discovery = DecoratorDiscovery()

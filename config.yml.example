@@ -5,6 +5,12 @@ api_hash: ""
 user_id: ""
 bot_token: ""
 
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+
 handlers:
   auto_forward:
     enabled: true
@@ -13,4 +19,6 @@ handlers:
         forward_to: "-22"
       - forward_from: "-33"
         forward_to: "-44"
-
+  auto_dme:
+    enabled: true
+    cache_time: 3600 # minutes
