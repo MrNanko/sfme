@@ -91,7 +91,7 @@ async def auto_dme_manage_handler(event):
     except Exception as e:
         logger.error(f"Error in auto_dme_handler: {e}")
 
-@schedule_cron("* * * * *")
+@schedule_cron("0 * * * *")
 async def auto_dme():
     """The scheduled task to process messages from Redis and delete them"""
     try:
