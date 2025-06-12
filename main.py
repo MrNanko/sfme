@@ -116,7 +116,7 @@ async def main():
         __load_redis_client(config.get("redis", {}))
 
         # Initialize Telethon client
-        client = init_client(config.get("api_id"), config.get("api_hash"), "sfme")
+        client = init_client(config.get("api_id"), config.get("api_hash"), config.get("session_name"))
 
         # Start Telethon client
         await client.start()

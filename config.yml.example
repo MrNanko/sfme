@@ -2,6 +2,7 @@ name: "sfme config file"
 
 api_id: ""
 api_hash: ""
+session_name: "sfme"
 user_id: ""
 bot_token: ""
 
