@@ -16,16 +16,18 @@ from ..core.client import client
 logger = logging.getLogger(__name__)
 
 @client.on(events.NewMessage(pattern=r'^-dme(?:\s+(\d+))?$', from_users='me'))
-async def delete_handler(event):
+async def dme_handler(event):
     """ Handle the -dme command to delete messages in the current chat."""
     try:
         start_time = time.time()
         # Get the count of messages to delete from the command argument
-        count = int(event.pattern_match.group(1)) if event.pattern_match.group(1) else 1
-        count = min(count, 100)  # Limit to a maximum of 100 messages
+        count = int(event.pattern_match.group(1)) if event.pattern_match.group(1) else 0
 
         # Get the last `count + 1` messages in the chat (including the command message itself)
         messages = await client.get_messages(event.chat_id, limit=count + 1, from_user='me')
+
+        for message in messages:
+            logger.info(f'Deleted message {message.id} - {message.chat_id} - {message}')
 
         # Delete the messages, excluding the command message itself
         await client.delete_messages(event.chat_id, messages)
@@ -39,4 +41,4 @@ async def delete_handler(event):
         logger.info(f"Deleted {len(messages)} messages in chat {event.chat_id}")
 
     except Exception as e:
-        logger.error(f"Error in delete_message_handler: {e}")
+        logger.error(f"Error in dme_handler: {e}")
