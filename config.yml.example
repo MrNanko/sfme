@@ -3,6 +3,7 @@ name: "sfme config file"
 api_id: ""
 api_hash: ""
 session_name: "sfme"
+key_prefix: "sfme" # Prefix for Redis keys
 user_id: ""
 bot_token: ""
 
