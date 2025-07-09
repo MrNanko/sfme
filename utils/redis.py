@@ -127,6 +127,87 @@ class RedisOperations:
     def __init__(self, redis_manager: RedisManager):
         self.redis = redis_manager.redis_client
 
+    # ================ Key Pattern Operations ===========
+
+    def keys(self, pattern: str = "*") -> List[str]:
+        """
+        Find all keys matching the given pattern
+
+        Args:
+            pattern: Pattern to match (e.g., "user:*", "cache:*", "*")
+
+        Returns:
+            List of matching keys
+
+        Note:
+            Use with caution in production as it can be slow with large datasets.
+            Consider using SCAN for better performance.
+        """
+        try:
+            return self.redis.keys(pattern)
+        except Exception as e:
+            logger.error(f"Failed to get keys with pattern {pattern}: {e}")
+            return []
+
+    def scan_keys(self, pattern: str = "*", count: int = 1000) -> List[str]:
+        """
+        Scan keys matching pattern using SCAN command (recommended for production)
+
+        Args:
+            pattern: Pattern to match
+            count: Number of keys to return per iteration
+
+        Returns:
+            List of all matching keys
+        """
+        try:
+            keys = []
+            cursor = 0
+            while True:
+                cursor, batch_keys = self.redis.scan(cursor=cursor, match=pattern, count=count)
+                keys.extend(batch_keys)
+                if cursor == 0:
+                    break
+            return keys
+        except Exception as e:
+            logger.error(f"Failed to scan keys with pattern {pattern}: {e}")
+            return []
+
+    def delete_pattern(self, pattern: str) -> int:
+        """
+        Delete all keys matching the given pattern
+
+        Args:
+            pattern: Pattern to match (e.g., "cache:*", "temp:*")
+
+        Returns:
+            Number of keys deleted
+        """
+        try:
+            keys = self.scan_keys(pattern)
+            if keys:
+                return self.redis.delete(*keys)
+            return 0
+        except Exception as e:
+            logger.error(f"Failed to delete keys with pattern {pattern}: {e}")
+            return 0
+
+    def count_keys(self, pattern: str = "*") -> int:
+        """
+        Count keys matching the given pattern
+
+        Args:
+            pattern: Pattern to match
+
+        Returns:
+            Number of matching keys
+        """
+        try:
+            return len(self.scan_keys(pattern))
+        except Exception as e:
+            logger.error(f"Failed to count keys with pattern {pattern}: {e}")
+            return 0
+
     # ================ String Operations ================
 
     def set_string(self, key: str, value: str, ex: int = None) -> bool:
@@ -230,10 +311,21 @@ class RedisOperations:
 
     # ================ Hash Operations ================
 
-    def hset(self, name: str, key: str, value: str) -> bool:
-        """Set hash field"""
+    def hset(self, name: str, key: str, value: str, ex: int = None) -> bool:
+        """
+        Set hash field with optional expiration
+
+        Args:
+            name: Hash name
+            key: Field key
+            value: Field value
+            ex: Expiration time in seconds (applies to entire hash)
+        """
         try:
-            return bool(self.redis.hset(name, key, value))
+            result = bool(self.redis.hset(name, key, value))
+            if result and ex is not None:
+                self.redis.expire(name, ex)
+            return result
         except Exception as e:
             logger.error(f"Failed to set hash {name}.{key}: {e}")
             return False
@@ -254,10 +346,20 @@ class RedisOperations:
             logger.error(f"Failed to get all hash fields {name}: {e}")
             return {}
 
-    def hmset(self, name: str, mapping: Dict) -> bool:
-        """Batch set hash fields"""
+    def hmset(self, name: str, mapping: Dict, ex: int = None) -> bool:
+        """
+        Batch set hash fields with optional expiration
+
+        Args:
+            name: Hash name
+            mapping: Dictionary of field-value pairs
+            ex: Expiration time in seconds (applies to entire hash)
+        """
         try:
-            return bool(self.redis.hmset(name, mapping))
+            result = bool(self.redis.hmset(name, mapping))
+            if result and ex is not None:
+                self.redis.expire(name, ex)
+            return result
         except Exception as e:
             logger.error(f"Failed to batch set hash fields {name}: {e}")
             return False
@@ -370,4 +472,32 @@ class RedisOperations:
             return self.redis.zrem(name, *values)
         except Exception as e:
             logger.error(f"Failed to remove elements from sorted set {name}: {e}")
+            return 0
+
+    # ================ Database Operations ================
+
+    def flushdb(self) -> bool:
+        """
+        Clear current database
+
+        Returns:
+            True if successful
+        """
+        try:
+            return bool(self.redis.flushdb())
+        except Exception as e:
+            logger.error(f"Failed to flush database: {e}")
+            return False
+
+    def dbsize(self) -> int:
+        """
+        Get number of keys in current database
+
+        Returns:
+            Number of keys
+        """
+        try:
+            return self.redis.dbsize()
+        except Exception as e:
+            logger.error(f"Failed to get database size: {e}")
             return 0
