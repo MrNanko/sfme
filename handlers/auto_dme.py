@@ -22,7 +22,7 @@ from ..utils.redis import redis_ops
 logger = logging.getLogger(__name__)
 
 # Redis key patterns
-MESSAGE_KEY_PATTERN = 'auto_dme:{uid}'
+MESSAGE_KEY_PATTERN = config.get('key_prefix', 'sfme') + 'auto_dme:{uid}'
 MESSAGE_CHAT_ID_WHITE_LIST_KEY_PATTERN = 'auto_dme:chat_id_white_list:{uid}'
 
 @client.on(events.NewMessage(from_users='me'))
@@ -142,7 +142,9 @@ async def auto_dme():
 
                 if timestamp > (int(time.time()) - 60 * int(config.get('handlers', {}).get('auto_dme', {}).get('cache_time', 3600))):
                     logger.info(f"Message {message_id} in chat {chat_id} is too recent, skipping deletion")
-                    break
+                else:
+                    deleted_messages_dict[chat_id].append(message_id)
+                    logger.info(f"Message {message_id} in chat {chat_id} added to deletion queue")
 
             except json.JSONDecodeError as e:
                 logger.error(f"Json decode error: {e}")
