@@ -21,9 +21,10 @@ from ..utils.redis import redis_ops
 
 logger = logging.getLogger(__name__)
 
-# Redis key patterns
-MESSAGE_KEY_PATTERN = config.get('key_prefix', 'sfme') + 'auto_dme:{uid}'
-MESSAGE_CHAT_ID_WHITE_LIST_KEY_PATTERN = 'auto_dme:chat_id_white_list:{uid}'
+# Redis key
+user_id = config.get('user_id', 'unknown')
+MESSAGE_KEY = f'auto_dme:{user_id}'
+MESSAGE_CHAT_ID_WHITE_LIST_KEY = f'auto_dme:chat_id_white_list:{user_id}'
 
 @client.on(events.NewMessage(from_users='me'))
 async def auto_dme_handler(event):
@@ -34,24 +35,21 @@ async def auto_dme_handler(event):
         chat_id = event.chat_id
         message_id = event.message.id
 
-        uid = config.get('user_id', 'unknown')
-        key = MESSAGE_KEY_PATTERN.format(uid=uid)
-
         if not redis_ops:
             logger.error("Redis operations not initialized")
             return
 
-        chat_ids = await loop.run_in_executor(None, redis_ops.smembers,
-                                              MESSAGE_CHAT_ID_WHITE_LIST_KEY_PATTERN.format(uid=uid))
-        white_list = [int(cid) for cid in chat_ids]
-        logger.debug(f"white_list: {white_list}")
+        # chat_ids = await loop.run_in_executor(None, redis_ops.smembers,
+        #                                       MESSAGE_CHAT_ID_WHITE_LIST_KEY)
+        # white_list = [int(cid) for cid in chat_ids]
+        # logger.debug(f"white_list: {white_list}")
 
         # Do not process messages from groups or the chat_id is in the whitelist
-        if (not event.is_group) or (chat_id in white_list):
-            logger.info(f"Skipping message {message_id} from group/channel {chat_id}")
-            return
+        # if (not event.is_group) or (chat_id in white_list):
+        #     logger.info(f"Skipping message {message_id} from group/channel {chat_id}")
+        #     return
 
-        logger.info(f"Message {message_id} from chat {chat_id} added to Redis queue with key {key}")
+        logger.info(f"Message {message_id} from chat {chat_id} added to Redis queue with key {MESSAGE_KEY}")
 
         # Serialize message data to JSON
         serialized_data = json.dumps({
@@ -60,8 +58,10 @@ async def auto_dme_handler(event):
             'timestamp': int(event.message.date.timestamp()),
         })
 
+        logger.info(MESSAGE_KEY)
+
         # Use asyncio to run Redis operations in a thread-safe manner
-        await loop.run_in_executor(None, redis_ops.lpush, key, serialized_data)
+        await loop.run_in_executor(None, redis_ops.lpush, MESSAGE_KEY, serialized_data)
 
     except Exception as e:
         logger.error(f"Error in auto_dme_handler: {e}")
@@ -79,21 +79,18 @@ async def auto_dme_manage_handler(event):
 
         logger.info(f"Managing auto delete message for chat {chat_id}")
 
-        uid = config.get('user_id', 'unknown')
-        key = MESSAGE_CHAT_ID_WHITE_LIST_KEY_PATTERN.format(uid=uid)
-
         # Use asyncio to run Redis operations in a thread-safe manner
         loop = asyncio.get_running_loop()
 
         op = event.pattern_match.group(1) if event.pattern_match.group(1) else None
         if op == 'add':
-            await loop.run_in_executor(None, redis_ops.sadd, key, chat_id)
+            await loop.run_in_executor(None, redis_ops.sadd, MESSAGE_CHAT_ID_WHITE_LIST_KEY, chat_id)
             result = await event.respond(f"Chat ID {chat_id} added to auto delete message whitelist.")
         elif op == 'remove':
-            await loop.run_in_executor(None, redis_ops.srem, key, chat_id)
+            await loop.run_in_executor(None, redis_ops.srem, MESSAGE_CHAT_ID_WHITE_LIST_KEY, chat_id)
             result = await event.respond(f"Chat ID {chat_id} removed from auto delete message whitelist.")
         elif op == 'list':
-            chat_ids = await loop.run_in_executor(None, redis_ops.smembers, key)
+            chat_ids = await loop.run_in_executor(None, redis_ops.smembers, MESSAGE_CHAT_ID_WHITE_LIST_KEY)
             chat_ids = [int(cid) for cid in chat_ids]
             result = await event.respond(f"Chat ID {chat_ids} list.")
         else:
@@ -114,18 +111,19 @@ async def auto_dme():
             logger.error("Redis operations not initialized")
             return
 
-        uid = config.get('user_id', 'unknown')
-        key = MESSAGE_KEY_PATTERN.format(uid=uid)
-
         deleted_messages_dict = defaultdict(list)
 
         # Get current event loop
         loop = asyncio.get_running_loop()
 
+        chat_ids = await loop.run_in_executor(None, redis_ops.smembers,
+                                              MESSAGE_CHAT_ID_WHITE_LIST_KEY)
+        white_list = [int(cid) for cid in chat_ids]
+
         while True:
             try:
                 serialized_message = await loop.run_in_executor(
-                    None, redis_ops.rpop, key
+                    None, redis_ops.rpop, MESSAGE_KEY
                 )
             except Exception as e:
                 logger.error(f"redis rpop error: {e}")
@@ -140,11 +138,17 @@ async def auto_dme():
                 message_id = message_data['message_id']
                 timestamp = int(message_data['timestamp'])
 
-                if timestamp > (int(time.time()) - 60 * int(config.get('handlers', {}).get('auto_dme', {}).get('cache_time', 3600))):
+                logger.info(message_data)
+
+                if message_id in white_list:
+                    continue
+
+                if timestamp > (int(time.time()) - 60 * int(config.get('handlers', {}).get('auto_dme', {}).get('cache_time', 120))):
                     logger.info(f"Message {message_id} in chat {chat_id} is too recent, skipping deletion")
+                    break
                 else:
                     deleted_messages_dict[chat_id].append(message_id)
-                    logger.info(f"Message {message_id} in chat {chat_id} added to deletion queue")
+                    logger.info(f"Message {message_id} in chat {chat_id} will be deleted")
 
             except json.JSONDecodeError as e:
                 logger.error(f"Json decode error: {e}")
