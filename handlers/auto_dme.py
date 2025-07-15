@@ -140,7 +140,7 @@ async def auto_dme():
 
                 logger.info(message_data)
 
-                if message_id in white_list:
+                if chat_id in white_list:
                     continue
 
                 if timestamp > (int(time.time()) - 60 * int(config.get('handlers', {}).get('auto_dme', {}).get('cache_time', 120))):
