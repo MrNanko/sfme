@@ -7,5 +7,5 @@ PyYAML==6.0.2
 redis==6.2.0
 requests==2.32.4
 rsa==4.9.1
-Telethon==1.40.0
+Telethon==1.41.2
 urllib3==2.5.0
