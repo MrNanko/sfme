@@ -1,0 +1,34 @@
+services:
+  sfme-login:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sfme:local
+    working_dir: /
+    volumes:
+      - ./:/sfme
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TZ=Asia/Shanghai
+    command: /bin/sh /sfme/shell/session_entry.sh login
+    stdin_open: true
+    tty: true
+    restart: "no"
+    profiles:
+      - login
+
+  sfme:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sfme:local
+    hostname: sfme
+    container_name: sfme
+    working_dir: /
+    restart: always
+    volumes:
+      - ./:/sfme
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TZ=Asia/Shanghai
+    command: /bin/sh /sfme/shell/session_entry.sh start
